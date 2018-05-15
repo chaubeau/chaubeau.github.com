@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="Darcy world"><title>Redis中的used_memory与maxmemory解惑 | Darcy Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">Redis中的used_memory与maxmemory解惑</h1><a id="logo" href="/.">Darcy Blog</a><p class="description">The more I see of the world, the more I am dissatisfied with it</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">Redis中的used_memory与maxmemory解惑</h1><div class="post-meta">Aug 14, 2016<span> | </span><span class="category"><a href="/categories/Redis/">Redis</a></span></div><div class="post-content"><h1 id="Redis中的used-memory与maxmemory解惑"><a href="#Redis中的used-memory与maxmemory解惑" class="headerlink" title="Redis中的used_memory与maxmemory解惑"></a>Redis中的used_memory与maxmemory解惑</h1><h2 id="概述"><a href="#概述" class="headerlink" title="概述"></a>概述</h2><p>在Redis2.X系列和3.X系列执行info Memory，会打印出来一些Redis内存使用情况的信息，在2.X系列中显示如下：</p>
+<pre><code>127.0.0.1:6379&gt; info Memory
+used_memory:279440336
+used_memory_human:266.50M
+used_memory_rss:295079936
+used_memory_peak:298650696
+used_memory_peak_human:284.82M
+used_memory_lua:36864
+mem_fragmentation_ratio:1.06
+mem_allocator:jemalloc-3.6.0
+</code></pre><p>在3.X系列中显示如下：<br>    used_memory:22259232<br>    used_memory_human:21.23M<br>    used_memory_rss:58331136<br>    used_memory_rss_human:55.63M<br>    used_memory_peak:98079600<br>    used_memory_peak_human:93.54M<br>    total_system_memory:7847321600<br>    total_system_memory_human:7.31G<br>    used_memory_lua:37888<br>    used_memory_lua_human:37.00K<br>    maxmemory:6000000000<br>    maxmemory_human:5.59G<br>    maxmemory_policy:noeviction<br>    mem_fragmentation_ratio:2.62<br>    mem_allocator:jemalloc-4.0.3</p>
+<p>对比观察发现在3.X系列中，主要增加了system memory和maxmemory及maxmemory淘汰策略，在2.X系列中，获取这些值需要通过CONFIG GET maxmemory*来获取配置项。那么maxmemory和used_memory<br>是什么关系呢，used_memory为什么会超过maxmemory呢，为了解开这个疑惑，我们将从源码出发，详细的解读used_memory和maxmemory的关系。</p>
+<h2 id="Memory是如何统计的"><a href="#Memory是如何统计的" class="headerlink" title="Memory是如何统计的"></a>Memory是如何统计的</h2><pre><code>在Redis的实现中并没有为每个Object设计大小计数器，而是充分利用了Redis单进程模型的特点，直接统计的进程占用的内存大小，相关代码如下：
+
+size_t zmalloc_used_memory(void) {
+    size_t um;
+    if (zmalloc_thread_safe) {
+#if defined(__ATOMIC_RELAXED) || defined(HAVE_ATOMIC)
+        um = update_zmalloc_stat_add(0);
+#else
+        pthread_mutex_lock(&amp;used_memory_mutex);
+        um = used_memory;
+        pthread_mutex_unlock(&amp;used_memory_mutex);
+#endif
+    }
+    else {
+        um = used_memory;
+    }
+    return um;
+}
+</code></pre><p>maxmemory是我们在配置文件中或者通过config命令进行配置的，最终都保存在redisServer的结构体中，代码如下:</p>
+<pre><code>/* Limits */
+   unsigned int maxclients;            /* Max number of simultaneous clients */
+   unsigned long long maxmemory;       /* Max number of memory bytes to use */
+   int maxmemory_policy;               /* Policy for key eviction */
+   int maxmemory_samples;              /* Pricision of random sampling */
+</code></pre><h2 id="什么时候触发maxmemory"><a href="#什么时候触发maxmemory" class="headerlink" title="什么时候触发maxmemory"></a>什么时候触发maxmemory</h2><p>Redis的作者在实现时，讲maxmemory判断策略放在了建立连接的函数中processCommand,这意味着每次新建立连接，Redis都会做maxmemory判断，具体实现是用freeMemoryIfNeeded函数实现，但是在<br>这个函数中，我们发现了一些好玩的事情，代码如下：</p>
+<pre><code>int freeMemoryIfNeeded(void) {
+    size_t mem_used, mem_tofree, mem_freed;
+    int slaves = listLength(server.slaves);
+    mstime_t latency, eviction_latency;
+    /* Remove the size of slaves output buffers and AOF buffer from the
+     * count of used memory. */
+    mem_used = zmalloc_used_memory();
+    if (slaves) {
+        listIter li;
+        listNode *ln;
+        listRewind(server.slaves,&amp;li);
+        while((ln = listNext(&amp;li))) {
+            client *slave = listNodeValue(ln);
+            unsigned long obuf_bytes = getClientOutputBufferMemoryUsage(slave);
+            if (obuf_bytes &gt; mem_used)
+                mem_used = 0;
+            else
+                mem_used -= obuf_bytes;
+        }
+    }
+    if (server.aof_state != AOF_OFF) {
+        mem_used -= sdslen(server.aof_buf);
+        mem_used -= aofRewriteBufferSize();
+    }
+</code></pre><p>这段代码暴露了作者的真实设计意图，maxmemory不是限制Redis最大可使用内存的，而是限制数据存储大小的，计算时减掉了一些buffer，但是在实现上存在一些比较严重的问题，下面我们详细的讨论这个问题。</p>
+<h2 id="使用者的疑惑"><a href="#使用者的疑惑" class="headerlink" title="使用者的疑惑"></a>使用者的疑惑</h2><p>使用者的疑惑主要来自两个方面，在2.X系列版本中，很多使用者误以为maxmemory就是Redis可以使用的最大内存，maxmemory配置不合理导致一系列故障，如OOM，从库同步不成功等。<br>在3.X系列中，这个问题通过info命令彻底暴露给使用者了，为什么used_memory比maxmemory多，这两者的关系是什么，maxmemory到底是指什么，应该设置多大比较合理，作者并没有给出详细的解释也没有很好的文档说明。这就导致了使用者产生了众多疑惑。<br>在info命令的实现中，used_memory直接获取了Redis进程占用的内存，如下所示，就这段代码而言，used_memory大于maxmemory是必然的，并且出现了前后设计相违背的情况，比如info命令里面的lua memory也没有减去。</p>
+<pre><code>/* Memory */
+if (allsections || defsections || !strcasecmp(section,&quot;memory&quot;)) {
+    char hmem[64];
+    char peak_hmem[64];
+    char total_system_hmem[64];
+    char used_memory_lua_hmem[64];
+    char used_memory_rss_hmem[64];
+    char maxmemory_hmem[64];
+    size_t zmalloc_used = zmalloc_used_memory();
+    size_t total_system_mem = server.system_memory_size;
+    const char *evict_policy = evictPolicyToString();
+    long long memory_lua = (long long)lua_gc(server.lua,LUA_GCCOUNT,0)*1024;
+    /* Peak memory is updated from time to time by serverCron() so it
+     * may happen that the instantaneous value is slightly bigger than
+     * the peak value. This may confuse users, so we update the peak
+     * if found smaller than the current memory usage. */
+    if (zmalloc_used &gt; server.stat_peak_memory)
+        server.stat_peak_memory = zmalloc_used;
+    bytesToHuman(hmem,zmalloc_used);
+    bytesToHuman(peak_hmem,server.stat_peak_memory);
+    bytesToHuman(total_system_hmem,total_system_mem);
+    bytesToHuman(used_memory_lua_hmem,memory_lua);
+    bytesToHuman(used_memory_rss_hmem,server.resident_set_size);
+    bytesToHuman(maxmemory_hmem,server.maxmemory);
+</code></pre><h2 id="还遗漏了什么"><a href="#还遗漏了什么" class="headerlink" title="还遗漏了什么"></a>还遗漏了什么</h2><p>mem_used - obuf_bytes - aofRewriteBufferSize()是否就等于最大可以存储的数据大小呢，答案是否定的。就Redis中的buffer而言，除了主从同步的buffer、aofRewriteBuffer外还有其他的buffer，在Redis的配置中还有<br>client-output-buffer-limit这个参数，在Reids中所有的client请求redis数据的时候，redis要返回给client的数据都会先被存储在output-buffer中，等所有信息都被传送完毕之后，再清除output-buffer中的数据，这个参数可以可以解读为三段</p>
+<p>normal，常规的client缓存返回结果的buffer<br>slave，slave节点同步数据的buffer<br>pubsub，pubsub时产生的buffer<br>其中每一段可以设置一个硬限，一个软限，一个超时时间，作者在上面的实现时，从mem_used减掉了slave节点的buffer大，但是并没有减掉normal和pubsub占用的buffer，这是作者遗漏的第一点。<br>在Redis2.8版本之前，没有增量复制功能，如果出现主从同步中断，则只能全量同步，在2.8版本之后，增加了部分复制的功能，为此引进了一个新的参数repl-backlog-size,repl-backlog-size是一个环形缓冲区，整个master进程中只会存在一个，所有的slave公用，主从同步时，不仅将<br>命令发送到slave，同时会计入repl-backlog-size，当某个slave断开重连时，使用psync将repl-backlog-size的内容发送给slave，实现增量复制，但是由于环形缓冲区是环形缓冲区，所以写满后会覆盖之前的部分，这个时候从节点断开时只能全量复制了。所以这个参数<br>在增量复制时是关键的参数，这部分在主节点上也会占用内存，这是作者遗漏的第二点。<br>第三点是RDB COW时占用的内存，代码如下,需要注意的是，Redis的bgsave和aofRewrite是通过后台线程来实现的，RDB过程中占用的内存页应该计算到Redis占用的内存中去。</p>
+<pre><code> if (retval == C_OK) {
+           size_t private_dirty = zmalloc_get_private_dirty();
+           if (private_dirty) {
+               serverLog(LL_NOTICE,
+                   &quot;RDB: %zu MB of memory used by copy-on-write&quot;,
+                   private_dirty/(1024*1024));
+           }
+        ……
+}
+</code></pre><p>当然，上面这三点并不是遗漏的全部，还有诸如monitors，lua等，但是由于Redis是用减法的形式获得的mem_used，所以并不会特别精确。</p>
+<h2 id="如何改善"><a href="#如何改善" class="headerlink" title="如何改善"></a>如何改善</h2><p>如果按照Redis作者的意图，那么maxmemory的判断至少应该减掉上面所提的三个点占用的内存，在info命令打印的内存信息中，增加data_used_memory,避免使用者的疑惑。<br>如果想用maxmemory控制Redis进程占用的最大内存大小，那么应该在freeMemoryIfNeeded函数中不进行减法，直接判断maxmemory，这样就可以限定最大使用内存上限。</p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>实际使用中需要理解已下几点：</p>
+<p>maxmemory并不是Redis最大使用的内存上限<br>Redis最大使用的内存上限应该考虑数据存储+各种buffer+QPS+从节点数量等信息。</p>
+</div><div><ul class="post-copyright"><li class="post-copyright-author"><strong>本文作者：</strong>Darcy</li><li class="post-copyright-link"><strong>本文链接：</strong><a href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">http://www.darcy.org.cn/2016/08/14/Redis中的used-memory与maxmemory解惑/</a></li><li class="post-copyright-license"><strong>版权声明：</strong>The author owns the copyright, please indicate the source reproduced</li></ul></div><br><div class="tags"><a href="/tags/经验/">经验</a><a href="/tags/Redis/">Redis</a></div><div class="post-nav"><a class="pre" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a><a class="next" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="http://www.darcy.org.cn"/></form></div><div class="widget"><form class="search-form" action="//www.baidu.com/baidu" method="get" accept-charset="utf-8" target="_blank"><input type="search" name="word" maxlength="20" placeholder="Search"/><input type="hidden" name="si" value="http://www.darcy.org.cn"/><input name="tn" type="hidden" value="bds"/><input name="cl" type="hidden" value="3"/><input name="ct" type="hidden" value="2097152"/><input name="s" type="hidden" value="on"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Elasticsearch/">Elasticsearch</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Linux/">Linux</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/MySQL/">MySQL</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Redis/">Redis</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/工具/">工具</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/Thunderbird/" style="font-size: 15px;">Thunderbird</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/Tool/" style="font-size: 15px;">Tool</a> <a href="/tags/工具/" style="font-size: 15px;">工具</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/设计/" style="font-size: 15px;">设计</a> <a href="/tags/Shell/" style="font-size: 15px;">Shell</a> <a href="/tags/优化/" style="font-size: 15px;">优化</a> <a href="/tags/经验/" style="font-size: 15px;">经验</a> <a href="/tags/Redis/" style="font-size: 15px;">Redis</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/监控/" style="font-size: 15px;">监控</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2017/05/11/Elasticsearch监控/">Elasticsearch监控</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a></li><li class="post-list-item"><a class="post-list-link" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/23/mysqltong-ji-xin-xi/">MySQL统计信息</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/12/MySQL-explain/">MySQL 执行计划详解</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/05/30/new-day/">用原生终端打造Linux的securecrt</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://chaubeau.lofter.com" title="chaubeau" target="_blank">chaubeau</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>

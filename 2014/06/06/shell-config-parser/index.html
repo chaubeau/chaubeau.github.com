@@ -1,0 +1,88 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="Darcy world"><title>shell 解析配置文件 | Darcy Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">shell 解析配置文件</h1><a id="logo" href="/.">Darcy Blog</a><p class="description">The more I see of the world, the more I am dissatisfied with it</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">shell 解析配置文件</h1><div class="post-meta">Jun 6, 2014<span> | </span><span class="category"><a href="/categories/Linux/">Linux</a></span></div><div class="post-content"><p>&emsp;在程序中使用配置文件来灵活的配置一些参数是一件很常见的事情，配置文件的解析并不复杂,Python、php等语言都有丰富的类库。<br>&emsp;shell脚本在日常Linux使用过程中经常用到，但是缺少一些”类库“，本文将通过Linux下的sed等命令，实现一套shell config parser，支持ini类型的配置文件，这种文件由多个section组成，每个section下面有有多个配置项，要求同一配置文件中section不可重复，如下的配置文件中的[db_3306]和[db_3308]就是该配置文件中的section,配置项的value如果有多个值，使用空格隔开。<br><a id="more"></a></p>
+<pre>
+<code>
+        [db_3306]
+        db_host=127.0.0.1
+        db_user=root
+        db_port=3306
+        db_passowrd=root123
+
+        [db_3308]
+        db_host=192.168.1.1
+        db_user=admin
+        db_port=3308
+        db_passowrd=admin123
+</code>
+</pre>
+
+<p>接下来将介绍如何通过sed等命令实现解析、删除、修改、新增配置文件中的section和配置项。    </p>
+<ul>
+<li>列出某个配置文件中的所有section</li>
+</ul>
+<pre>
+<code>
+        function GetSec()
+        {
+            conf=$(echo $1)
+            g_sec=`sed -n '/\[*\]/p' $conf  |grep -v '^#'|tr -d []`
+            echo  "$g_sec"
+        }
+</code>
+</pre>
+
+<ul>
+<li><p>列出某个section中的所有的Key<br><pre><br><code></code></pre></p>
+<pre><code>function Keylist()
+{
+    l_sec=$(echo $1)
+    l_conf=$(echo $2)
+    sed -n &apos;/\[&apos;$l_sec&apos;\]/,/\[/p&apos; $l_conf|grep -Ev &apos;\[|\]|^$&apos;|awk -F&apos;=&apos; &apos;{print $1}&apos;
+}
+</code></pre><p><br><br>该函数需要两个参数，分别是section和所要解析配置文件.</p>
+</li>
+<li><p>section中删除某个Key<br><pre><br><code></code></pre></p>
+<pre><code>function DelKey()
+{
+    d_sec=$(echo $1)
+    d_key=$(echo $2)
+    d_conf=$(echo $3)
+    sed -i &apos;/\[&apos;$d_sec&apos;]/{:a;N;/\n\[/!{$!ba};s/\(&apos;$d_key&apos;\)[^\n]*//1}&apos; $d_conf
+    sed -i &apos;/^$/d&apos; $d_conf
+    sed -i &apos;/\[*\]/{x;p;x;}&apos; $d_conf
+}
+</code></pre><p><br><br>该函数需要三个参数，分别是section和该section中对应的Key及要进行操作的配置文件。</p>
+</li>
+<li><p>section中增加某个Key<br><pre><br><code></code></pre></p>
+<pre><code>function SetKey()
+{
+
+    s_sec=$(echo $1)
+    s_key=$(echo $2)
+    s_value=$(echo $3)
+    s_conf=$(echo $4)
+    key_value=&quot;$s_key=$s_value&quot;
+    if Keylist $s_sec $s_conf|grep &quot;$s_key&quot; &gt;/dev/null
+    then
+        echo &quot;$s_key already exists,please update $s_key&quot;
+    else
+        sed -i &quot;/^\[$s_sec\]/a$key_value&quot; $s_conf
+    fi
+}
+</code></pre></li>
+</ul>
+<p><br><br>该函数需要指定四个参数，分别是要进行的操作的section和配置文件，新增的Key及Value，当Key存在时，不允许新增。</p>
+<ul>
+<li>section中修改某个Key<br><pre><br><code><pre><code>function ModKey()
+{
+    m_sec=$(echo $1)
+    m_key=$(echo $2)
+    m_dis=$(echo $3) 
+    m_conf=$(echo $4) 
+    sed -i &apos;/\[&apos;$m_sec&apos;]/{:a;N;/\n\[/!{$!ba};s/\(&apos;$m_key&apos;\)[^\n]*/\1=&apos;$m_dis&apos;/1}&apos; $m_conf
+}
+</code></pre></code></pre></li>
+</ul>
+<p><br><br>该函数需要指定4个参数，分别是要进行操作的section和配置文件，需要修改的Key，及修改后的Value。</p>
+<p>上面五个函数中的参数含义统一解释如下：<br>sec代表的是对应的section,_key代表的是配置文件中section段落中等号左边的值,_conf代表的是配置文件,_value代表的是section段落中等号右边的值,_value代表的是section段落中等号右边的值.</p>
+<hr>
+</div><div><ul class="post-copyright"><li class="post-copyright-author"><strong>本文作者：</strong>Darcy</li><li class="post-copyright-link"><strong>本文链接：</strong><a href="/2014/06/06/shell-config-parser/">http://www.darcy.org.cn/2014/06/06/shell-config-parser/</a></li><li class="post-copyright-license"><strong>版权声明：</strong>The author owns the copyright, please indicate the source reproduced</li></ul></div><br><div class="tags"><a href="/tags/Linux/">Linux</a><a href="/tags/Shell/">Shell</a><a href="/tags/Tool/">Tool</a></div><div class="post-nav"><a class="pre" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a><a class="next" href="/2014/05/30/new-day/">用原生终端打造Linux的securecrt</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="http://www.darcy.org.cn"/></form></div><div class="widget"><form class="search-form" action="//www.baidu.com/baidu" method="get" accept-charset="utf-8" target="_blank"><input type="search" name="word" maxlength="20" placeholder="Search"/><input type="hidden" name="si" value="http://www.darcy.org.cn"/><input name="tn" type="hidden" value="bds"/><input name="cl" type="hidden" value="3"/><input name="ct" type="hidden" value="2097152"/><input name="s" type="hidden" value="on"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Elasticsearch/">Elasticsearch</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Linux/">Linux</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/MySQL/">MySQL</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Redis/">Redis</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/工具/">工具</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/Thunderbird/" style="font-size: 15px;">Thunderbird</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/Tool/" style="font-size: 15px;">Tool</a> <a href="/tags/工具/" style="font-size: 15px;">工具</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/设计/" style="font-size: 15px;">设计</a> <a href="/tags/Shell/" style="font-size: 15px;">Shell</a> <a href="/tags/优化/" style="font-size: 15px;">优化</a> <a href="/tags/经验/" style="font-size: 15px;">经验</a> <a href="/tags/Redis/" style="font-size: 15px;">Redis</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/监控/" style="font-size: 15px;">监控</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2017/05/11/Elasticsearch监控/">Elasticsearch监控</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a></li><li class="post-list-item"><a class="post-list-link" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/23/mysqltong-ji-xin-xi/">MySQL统计信息</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/12/MySQL-explain/">MySQL 执行计划详解</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/05/30/new-day/">用原生终端打造Linux的securecrt</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://chaubeau.lofter.com" title="chaubeau" target="_blank">chaubeau</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>

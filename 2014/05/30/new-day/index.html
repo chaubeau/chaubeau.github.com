@@ -1,0 +1,93 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="Darcy world"><title>用原生终端打造Linux的securecrt | Darcy Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">用原生终端打造Linux的securecrt</h1><a id="logo" href="/.">Darcy Blog</a><p class="description">The more I see of the world, the more I am dissatisfied with it</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">用原生终端打造Linux的securecrt</h1><div class="post-meta">May 30, 2014<span> | </span><span class="category"><a href="/categories/Linux/">Linux</a></span></div><div class="post-content"><hr>
+<p>&emsp; 为了访问远程服务器，在windows平台下常用的软件有securecrt、xshell、putty等，这类软件或者收费或者只支持windows平台，对于Linux用户而言，有各种各样的terminal软件，但是相比securecrt这样的商业软件，如终端克隆、自动登陆这样的功能，常见的terminal软件却鲜有支持，本文将介绍如何通过改造默认的terminal打造linux下的’securecrt’，推荐使用terminator或者Yakuake。<br><a id="more"></a><br>&emsp; 在介绍以下方案前，需要提前做两件事:<br>1.请在～/.ssh 目录下添加config文件并填入如下内容，如文件已存在，追加即可。   </p>
+<pre><code>
+    Host *
+    ServerAliveInterval 300
+    ControlMaster auto
+    ControlPath ~/.ssh/master-%r@%h:%p
+    StrictHostKeyChecking no
+</code></pre> 
+
+<p>2.花费几分钟了解一下<a href="http://www.chinaunix.net/old_jh/24/594417.html" target="_blank" rel="noopener">expect</a>编程语言，安装tmux工具，安装方法不再赘述。      </p>
+<hr>
+<h4 id="方案一"><a href="#方案一" class="headerlink" title="方案一"></a>方案一</h4><p>Step1:&emsp; 使用expect实现自动登陆，关键部分代码如下：</p>
+<pre>
+<code>
+    #!/usr/bin/expect -f
+    trap {
+           set rows [stty rows]
+           set cols [stty columns]
+           stty rows \$rows columns \$cols < \$spawn_out(slave,name)
+    } WINCH
+
+    set timeout 10
+    set pin [lindex \$argv 1]
+    set token [lindex \$argv 0]
+
+    spawn ssh $user_name@relay00.example.com
+    expect  "*relay00.example.com's password:" {
+    send "\$pin\$token\n" }
+    expect "*example" {
+    send "ssh $username@example.com\n" }
+    expect "*password*" {
+    send "$password\n" }
+    expect "*$username@example.com*"
+    send "sudo -iu mysql\n"
+    expect -re "$"
+    interact
+</code>
+</pre>
+
+<p>根据自己的需要改造这段expect脚本，expect行代表的是交互式登陆时，出现在屏幕上的行，send行表示出现屏幕上的字符串时，你向终端发送什么字符串，通过这个过程模拟交互式登陆。</p>
+<p>Step2:  Run a custom command instead of my shell<br>意思是，当我启动这个终端或者新建一个窗口的时候，使用我指定的脚本或者命令代替默认的’sh’ or ‘bash’，如下图所示:<img src="/images/blog/run_cmd.png" width="600" height="200"><br>通过这种方式，我们可以自己编写脚本，在新建的终端窗口中实现自动登陆。Terminator终端可以实现水平分隔，垂直分隔，自带的Grouping功能也非常的使用，通过上面的改造，可以实现securecrt软件诸多关键功能。</p>
+<hr>
+<h4 id="方案二"><a href="#方案二" class="headerlink" title="方案二"></a>方案二</h4><p>在方案一实现自动登陆的基础上，通过Linux下的tmux或者screen实现securecrt的众多功能，本文仅介绍tmux。 </p>
+<p>Step1：本地终端运行tmux，通过如下脚本，可以实现一次自动登陆若干个远程终端，不需要新建多个窗口。</p>
+<pre>
+<code>
+
+    #!/bin/bash
+    cmd=$(which tmux) # tmux path
+    session=example   # session name
+    if [ -z $cmd ]
+    then
+        echo "You need to install tmux"
+    exit 1
+    fi
+    tmux_init()
+    {
+        #term1 是窗口的名称，根据自己的喜好填写
+        #sec是方案一实现的自动登陆程序的名称，根据自己的实际情况填写，自动登陆程序必须放在$PATH路径下
+        $cmd new-window -n "term1"  -t $session sec   
+        $cmd new-window -n "term2" -t $session  sec
+        $cmd new-window -n "term3" -t $session  sec
+        $cmd new-window -n "term4" -t $session  sec
+        $cmd new-window -n "term5" -t $session  sec
+        $cmd selectw -t $session:1
+    }
+
+    $cmd has -t $session
+    if [ ! $? -eq 0 ]
+    then
+        $cmd new -d  -s $session sec
+        tmux_init
+        $cmd a -t $session
+    else
+        $cmd a -t $session
+    fi
+    exit 0
+
+</code>
+</pre>
+
+<p>这种方案的优缺点如下： </p>
+<p>1.自动克隆多个会话，但是受限与SSH本身，最多可克隆10个窗口<br>2.远程服务端不需要安装tmux。<br>3.本地网络异常，会话信息不能保存。  </p>
+<p>Step2：远程服务器运行tmux </p>
+<p>代码同上，新建窗口时，去掉后面的调用程序（sec）即可。</p>
+<p>这种方案的优缺点如下：</p>
+<p>1.自动克隆多个会话，不受SSH限制，可克隆10个以上窗口。</p>
+<p>2.本地网络异常，不影响远程服务器上的会话信息。</p>
+<p>3.需要在远程服务端安装tmux软件</p>
+<p>4.登陆同一远程终端服务器的用户，可以进入并操作你的会话（暂时没有找到解决方案）</p>
+<p>相关代码请参考：<a href="https://github.com/chaubeau/Tool.git" target="_blank" rel="noopener">https://github.com/chaubeau/Tool.git</a></p>
+</div><div><ul class="post-copyright"><li class="post-copyright-author"><strong>本文作者：</strong>Darcy</li><li class="post-copyright-link"><strong>本文链接：</strong><a href="/2014/05/30/new-day/">http://www.darcy.org.cn/2014/05/30/new-day/</a></li><li class="post-copyright-license"><strong>版权声明：</strong>The author owns the copyright, please indicate the source reproduced</li></ul></div><br><div class="tags"><a href="/tags/Linux/">Linux</a><a href="/tags/工具/">工具</a></div><div class="post-nav"><a class="pre" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a><a class="next" href="/2014/04/05/thunderbird-ru-men/">Thunderbird 入门</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="http://www.darcy.org.cn"/></form></div><div class="widget"><form class="search-form" action="//www.baidu.com/baidu" method="get" accept-charset="utf-8" target="_blank"><input type="search" name="word" maxlength="20" placeholder="Search"/><input type="hidden" name="si" value="http://www.darcy.org.cn"/><input name="tn" type="hidden" value="bds"/><input name="cl" type="hidden" value="3"/><input name="ct" type="hidden" value="2097152"/><input name="s" type="hidden" value="on"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Elasticsearch/">Elasticsearch</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Linux/">Linux</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/MySQL/">MySQL</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Redis/">Redis</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/工具/">工具</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/Thunderbird/" style="font-size: 15px;">Thunderbird</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/Tool/" style="font-size: 15px;">Tool</a> <a href="/tags/工具/" style="font-size: 15px;">工具</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/设计/" style="font-size: 15px;">设计</a> <a href="/tags/Shell/" style="font-size: 15px;">Shell</a> <a href="/tags/优化/" style="font-size: 15px;">优化</a> <a href="/tags/经验/" style="font-size: 15px;">经验</a> <a href="/tags/Redis/" style="font-size: 15px;">Redis</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/监控/" style="font-size: 15px;">监控</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2017/05/11/Elasticsearch监控/">Elasticsearch监控</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a></li><li class="post-list-item"><a class="post-list-link" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/23/mysqltong-ji-xin-xi/">MySQL统计信息</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/12/MySQL-explain/">MySQL 执行计划详解</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/05/30/new-day/">用原生终端打造Linux的securecrt</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://chaubeau.lofter.com" title="chaubeau" target="_blank">chaubeau</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>

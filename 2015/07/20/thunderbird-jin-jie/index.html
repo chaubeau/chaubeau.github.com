@@ -1,0 +1,164 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="Darcy world"><title>Thunderbird 进阶 | Darcy Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">Thunderbird 进阶</h1><a id="logo" href="/.">Darcy Blog</a><p class="description">The more I see of the world, the more I am dissatisfied with it</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">Thunderbird 进阶</h1><div class="post-meta">Jul 20, 2015<span> | </span><span class="category"><a href="/categories/工具/">工具</a></span></div><div class="post-content"><h3 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h3><p>&emsp;&emsp;上一篇简单介绍了一些Thunderbird的常用知识和小技巧,但是Thunderbird可以把玩的东西远远不止这些,下面这篇文章将介绍另外3个Thunderbird可以玩的地方,分别是<code>制作属于自己的附加组件</code>,<code>巧用SQLite管理邮件</code>,<code>邮件安全</code>.</p>
+<h3 id="制作自己的附件组件"><a href="#制作自己的附件组件" class="headerlink" title="制作自己的附件组件"></a>制作自己的附件组件</h3><p>&emsp;&emsp;将通过一个实际的案例讲述如何编写Thunderbird插件,在这个演示的demo中将会实现以下两个功能:<br><a id="more"></a>  </p>
+<ul>
+<li>在statusbar 添加了一个时间标签,每一分钟更新一次.      </li>
+<li>每隔半小时弹窗一次,提醒用户注意休息,类似于小闹钟.  </li>
+</ul>
+<p>有几个名词需要首先解释以下:</p>
+<blockquote>
+<ul>
+<li>xpi:    mozilla系列应用程序(如Mozilla Firefox和Mozilla Thunderbird)扩展文件.</li>
+<li>xul:    可扩展标记语言用户界面语言,是为了支持Mozilla系列的应用程序（）而开发的使用者界面标示语言.</li>
+<li>扩展:    扩展可为应用程序新添功能.</li>
+</ul>
+</blockquote>
+<p>具体操作过程分为如下几个部分.</p>
+<h4 id="创建需要的文件和文件夹"><a href="#创建需要的文件和文件夹" class="headerlink" title="创建需要的文件和文件夹."></a>创建需要的文件和文件夹.</h4><pre><code>├── chrome
+│   ├── content
+│   │   ├── chaubeau_demo.js
+│   │   └── chaubeau_demo.xul
+│   ├── locale
+│   └── skin
+├── chrome.manifest
+├── defaults
+│   └── preferences
+└── install.rdf
+</code></pre><blockquote>
+<ul>
+<li>以上目录结构的:<code>chrome</code>,<code>content</code>文件夹的名字不可更改.</li>
+<li>install.rdf名字不可更改,必须放在XPI文件根目录下,它定义了所要安装的安装信息.</li>
+<li>chrome.manifest的名字和路径同install.rdf一样,也不可以更改.定义了应用程序窗口的内容区域之外的用户界面元素的集合.</li>
+</ul>
+</blockquote>
+<h4 id="编写install-rdf"><a href="#编写install-rdf" class="headerlink" title="编写install.rdf"></a>编写install.rdf</h4><p>示例代码如下:</p>
+<pre><code>&lt;?xml version=&quot;1.0&quot;?&gt;        
+&lt;RDF xmlns=&quot;http://www.w3.org/1999/02/22-rdf-syntax-ns#&quot;
+     xmlns:em=&quot;http://www.mozilla.org/2004/em-rdf#&quot;&gt;        
+  &lt;Description about=&quot;urn:mozilla:install-manifest&quot;&gt;
+    &lt;em:id&gt;chaubeau_demo@chaubeau.github.io&lt;/em:id&gt;
+    &lt;em:name&gt;Demo on Thunderbird&lt;/em:name&gt;
+    &lt;em:version&gt;0.1&lt;/em:version&gt;
+    &lt;em:type&gt;2&lt;/em:version&gt;
+    &lt;em:creator&gt;Chaubeau&lt;/em:creator&gt;
+    &lt;em:homepageURL&gt;https://github.com/chaubeau/Tool/tree/master/chaubeau_demo&lt;/em:homepageURL&gt;
+     &lt;em:description&gt;关于Thunderbird附件组件的演示,本组件实现了两个简单的演示功能:        
+         1.在statusbar 添加了一个时间标签,每一分钟刷新一次.        
+         2.每个半小时弹窗一次,提醒用户注意休息,类似于小闹钟.        
+         本组件旨在演示Thunderbird附件组件的开发流程.&lt;/em:description&gt;
+    &lt;em:targetApplication&gt;
+      &lt;Description&gt;
+        &lt;em:id&gt;{3550f703-e582-4d05-9a08-453d09bdfdc6}&lt;/em:id&gt;
+        &lt;em:minVersion&gt;28.0&lt;/em:minVersion&gt;
+        &lt;em:maxVersion&gt;36.0.*&lt;/em:maxVersion&gt;
+      &lt;/Description&gt;
+    &lt;/em:targetApplication&gt;        
+  &lt;/Description&gt;
+&lt;/RDF&gt;
+</code></pre><p>下面对一些必要的属性做简单的介绍:</p>
+<blockquote>
+<ul>
+<li>ID(<code>&lt;em:id&gt;</code>),一般ID是下面两个格式,其他的格式从火狐1.5之后就不予支持.<blockquote>
+<ul>
+<li>GUID (Firefox 1.0)</li>
+<li>类似与一个这样结构的字符串,<a href="mailto:extensionname@example.org" target="_blank" rel="noopener">extensionname@example.org</a></li>
+</ul>
+</blockquote>
+</li>
+<li>version(<code>&lt;em:version&gt;</code>),版本,一个标志当前扩展版本的字符串.</li>
+<li>type(<code>&lt;em:type&gt;</code>),一个整数代表扩展的类型,’2’代表是扩展程序.</li>
+<li>name(<code>&lt;em:name&gt;</code>),表示该扩展的名字.</li>
+<li>targetApplication,表示该扩展是用于Mozilla哪一种应用程序的,用ID做区别.<code>{3550f703-e582-4d05-9a08-453d09bdfdc6}</code>代表Thunderbird.<code>{ec8030f7-c20a-464f-9b0e-13a3a9e97384}</code>代表Firefox.</li>
+<li>minVersion:该扩展支持的最小版本.<br>maxVersion:该扩展支持的最大版本.</li>
+</ul>
+</blockquote>
+<p>以上是对示例代码的简单解释,详细的文档资料请参考<a href="https://developer.mozilla.org/zh-CN/docs/Mozilla/Add-ons/Install_Manifests" target="_blank" rel="noopener">Mozilla官方文档</a>.</p>
+<h4 id="编写chrome-manifest文件"><a href="#编写chrome-manifest文件" class="headerlink" title="编写chrome.manifest文件"></a>编写chrome.manifest文件</h4><p>示例代码:</p>
+<pre><code>content     chaubeau_demo    chrome/content/
+overlay chrome://messenger/content/messenger.xul chrome://chaubeau_demo/content/chaubeau_demo.xul
+</code></pre><p>上面讲到,Chrome指的是应用程序窗口的内容区域之外的用户界面元素的集合，这些用户界面元素包括工具条，菜单，进度条和窗口的标题栏等.一般包括下面几种类型：</p>
+<blockquote>
+<ul>
+<li>内容（Content）：通常是 XUL 文件。</li>
+<li>区域（Locale） ：存放本地化信息。</li>
+<li>皮肤（Skin）：描述 chrome 的外观。通常包含 CSS 和图像文件。</li>
+<li>overlay: 定义了将自己的XUL文件与那个系统XUL文件合并.</li>
+</ul>
+</blockquote>
+<p>Mozilla程序通过Chrome URIs来存取这些文件，比如在火狐浏览器里面访问:chrome://browser/content/browser.xul 就是是浏览器的主界面.</p>
+<h4 id="编写XUL文件"><a href="#编写XUL文件" class="headerlink" title="编写XUL文件"></a>编写XUL文件</h4><p>XUL示例代码如下:    </p>
+<pre><code>&lt;?xml version=&quot;1.0&quot;?&gt;
+&lt;overlay id=&quot;chaubeau&quot; xmlns=&quot;http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul&quot;&gt;
+&lt;script type=&quot;application/javascript&quot; src=&quot;chrome://chaubeau_demo/content/chaubeau_demo.js&quot;/&gt;
+ &lt;statusbar id=&quot;status-bar&quot;&gt;
+     &lt;statusbarpanel id=&quot;my-panel&quot; label=&quot;Date&quot;/&gt;
+ &lt;/statusbar&gt;
+&lt;/overlay&gt;
+</code></pre><p>&emsp;&emsp;以上XUL代码会加载一个JS文件,然后在statusbar上定义了一个自己的panel,ID为”my-panel”,代码比较简单不做详细解释.</p>
+<p>XUL代码里面加载的JS代码如下:<br>        window.addEventListener(“load”, function(e) {<br>            startup();<br>        }, true);</p>
+<pre><code>window.setInterval(
+    function() {
+        startup();
+    }, 6000); //update date every minute
+window.setInterval(
+    function()
+    {
+        window.alert(&quot;你应该休息一会了~&quot;);
+    },18000);
+function startup() {
+    var myPanel = document.getElementById(&quot;my-panel&quot;);
+    var date = new Date();
+    var day = date.getDay();
+    var dateString = date.getFullYear() + &quot;年&quot; + (date.getMonth()+1) + &quot;月&quot; + date.getDate()+&quot;日&quot;;
+    myPanel.label = &quot;时间: &quot; + dateString;
+
+}
+</code></pre><p>以上JS代码分别调用了window.addEventListener和window.setInterval两个系统函数.函数startup负责更新时间.</p>
+<h4 id="打包扩展文件"><a href="#打包扩展文件" class="headerlink" title="打包扩展文件."></a>打包扩展文件.</h4><p>&emsp;&emsp;回到扩展文件根目录下,执行<code>zip -r chaubeau_demo.xpi *</code>命令,生成扩展文件.</p>
+<h4 id="安装扩展文件"><a href="#安装扩展文件" class="headerlink" title="安装扩展文件."></a>安装扩展文件.</h4><p>&emsp;&emsp;打开Thunderbird的附件组件管理器,选择从文件安装附件组件.选择生成的chaubeau_demo.xpi文件安装,重启Thunderbird.</p>
+<h4 id="提交附件组件"><a href="#提交附件组件" class="headerlink" title="提交附件组件"></a>提交附件组件</h4><p>&emsp;&emsp;将你开发的附件组件,提交到Mozilla的展示库,提交是免费的(需要审核),要完成提交流程，需要附加组件包（*.xpi文件)和至少一幅该附加组件运行时的屏幕截图.<a href="https://addons.mozilla.org/zh-CN/developers/addon/submit/1" target="_blank" rel="noopener">提交地址</a>,enjoy it;</p>
+<h4 id="其他"><a href="#其他" class="headerlink" title="其他"></a>其他</h4><p>&emsp;&emsp;如果不想自己编写install.rdf和chrome.manifest以及建文件夹,那么还有一个方法,<a href="https://addons.mozilla.org/zh-CN/developers/tools/package/" target="_blank" rel="noopener">附加组件封装工具</a>,这个工具帮助你生成扩展组件的基础信息.</p>
+<p>&emsp;&emsp;以上是Thunderbird附件组件的一个简单的demo,实际上Mozilla支持多种方式:</p>
+<blockquote>
+<ul>
+<li><code>附加组件 SDK 扩展</code>,使用一组高级别的 JavaScript APIs 开发无需重启的扩展。</li>
+<li><code>无须重启的扩展</code>,手动创建无需重启的扩展。</li>
+<li><code>覆盖式扩展</code>,使用 overly 的方式创建传统的扩展,也就是该demo示例的方式.</li>
+</ul>
+</blockquote>
+<p>&emsp;&emsp;如果可能，最明智的是采用 Add-on SDK 的方式，它采用了无需重启的扩展机制，可以简化某些任务并在卸载后自动清理。如果 Add-on SDK 无法满足你的需求，可采用手动创建无需重启扩展的方式.Mozilla不仅提供了附件的扩展接口,还提供了<code>主题</code>接口,所谓主题,就是用来自定义用户界面的附加组件.除此之外还有<code>Search engine plugins</code>和<code>Plugins</code>.可以参考Mozilla的<a href="https://developer.mozilla.org/zh-CN/docs/Mozilla/Add-ons" target="_blank" rel="noopener">官方文档</a>.</p>
+<p>以上代码下载地址:<a href="https://github.com/chaubeau/Tool/tree/master/chaubeau_demo" target="_blank" rel="noopener">chaubeau-github</a></p>
+<h3 id="巧用SQLite管理邮件"><a href="#巧用SQLite管理邮件" class="headerlink" title="巧用SQLite管理邮件"></a>巧用SQLite管理邮件</h3><p>&emsp;&emsp;SQLite，是一款轻型的数据库，是遵守ACID的关系型数据库管理系统,进入$HOME/.thunderbird/*.default文件夹,会看到如下SQLite数据文件.</p>
+<pre><code>addons.sqlite               content-prefs.sqlite    extensions.sqlite         
+permissions.sqlite          trackerbird.sqlite      places.sqlite
+blist.sqlite                cookies.sqlite          formhistory.sqlite               
+webappsstore.sqlite         chromeappsstore.sqlite  downloads.sqlite      
+global-messages-db.sqlite   signons.sqlite
+</code></pre><p>执行<code>sqlite3 global-messages-db.sqlite</code> 打开global-messages-db这个DB.</p>
+<pre><code>sqlite&gt; .tables
+attributeDefinitions          imConversations
+contactAttributes             imConversationsText
+contacts                      imConversationsText_content
+conversations                 imConversationsText_segdir
+conversationsText             imConversationsText_segments
+conversationsText_content     messageAttributes
+conversationsText_segdir      messages
+conversationsText_segments    messagesText
+ext_mimeTypes                 messagesText_content
+folderLocations               messagesText_segdir
+identities                    messagesText_segments
+sqlite&gt; .mode column
+sqlite&gt; .header on  
+sqlite&gt; select count(*) from  contacts;
+count(*)
+----------
+6142
+</code></pre><p>&emsp;&emsp;这些sqlite库里面存了丰富的信息,可以去统计每天收发的邮件,可以去查看邮件索引信息,联系人等信息,具体怎么使用可以自由的发挥,当然也可以结合上面的demo开发相应的组件.</p>
+<h3 id="邮件安全"><a href="#邮件安全" class="headerlink" title="邮件安全"></a>邮件安全</h3><p>&emsp;&emsp;Enigmail是Mozilla Thunderbird的附加组件，它可以有效保护您邮件通讯的隐私.Engimail基于公钥加密技术,要求每个用户都要生成自己的密钥对</p>
+<blockquote>
+<ul>
+<li>公钥:可以与您的联系人进行分享。一旦您知道某位联系人的公开密钥，您就可以给这个人发送加密的电子邮件.</li>
+<li>私钥:通过某个密码或者口令等实行保护，这个密码不能和其他人分享.</li>
+</ul>
+</blockquote>
+<p>&emsp;&emsp;Enigmail也可以给您的邮件附上数字签名。如果收信人有一份您的有效公开密钥，他就可以知道这封邮件的来源，并且其内容也不会在发送途中被篡改.Enigmail只是提供了一个平台，真正发挥作用的是Thunderbird中的GnuPG加密技术,因此需要安装GNUPG.因此,需要在电脑上安装GNUPG工具以及Thunderbird的Enigmail扩展.<br><a href="https://www.enigmail.net/documentation/" target="_blank" rel="noopener">enigmail文档</a>和<a href="https://www.gnupg.org/" target="_blank" rel="noopener">GNUPG文档</a>都非常的详细,具体的操作过程就不在此赘述.</p>
+</div><div><ul class="post-copyright"><li class="post-copyright-author"><strong>本文作者：</strong>Darcy</li><li class="post-copyright-link"><strong>本文链接：</strong><a href="/2015/07/20/thunderbird-jin-jie/">http://www.darcy.org.cn/2015/07/20/thunderbird-jin-jie/</a></li><li class="post-copyright-license"><strong>版权声明：</strong>The author owns the copyright, please indicate the source reproduced</li></ul></div><br><div class="tags"><a href="/tags/工具/">工具</a><a href="/tags/Thunderbird/">Thunderbird</a></div><div class="post-nav"><a class="pre" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a><a class="next" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="http://www.darcy.org.cn"/></form></div><div class="widget"><form class="search-form" action="//www.baidu.com/baidu" method="get" accept-charset="utf-8" target="_blank"><input type="search" name="word" maxlength="20" placeholder="Search"/><input type="hidden" name="si" value="http://www.darcy.org.cn"/><input name="tn" type="hidden" value="bds"/><input name="cl" type="hidden" value="3"/><input name="ct" type="hidden" value="2097152"/><input name="s" type="hidden" value="on"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Elasticsearch/">Elasticsearch</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Linux/">Linux</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/MySQL/">MySQL</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Redis/">Redis</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/工具/">工具</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/Thunderbird/" style="font-size: 15px;">Thunderbird</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/Tool/" style="font-size: 15px;">Tool</a> <a href="/tags/工具/" style="font-size: 15px;">工具</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/设计/" style="font-size: 15px;">设计</a> <a href="/tags/Shell/" style="font-size: 15px;">Shell</a> <a href="/tags/优化/" style="font-size: 15px;">优化</a> <a href="/tags/经验/" style="font-size: 15px;">经验</a> <a href="/tags/Redis/" style="font-size: 15px;">Redis</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/监控/" style="font-size: 15px;">监控</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2017/05/11/Elasticsearch监控/">Elasticsearch监控</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a></li><li class="post-list-item"><a class="post-list-link" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/23/mysqltong-ji-xin-xi/">MySQL统计信息</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/12/MySQL-explain/">MySQL 执行计划详解</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/05/30/new-day/">用原生终端打造Linux的securecrt</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://chaubeau.lofter.com" title="chaubeau" target="_blank">chaubeau</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>
