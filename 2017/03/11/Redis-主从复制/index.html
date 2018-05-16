@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" name="viewport"><meta content="yes" name="apple-mobile-web-app-capable"><meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"><meta content="telephone=no" name="format-detection"><meta name="description" content="Darcy world"><title>Redis主从复制 | Darcy Blog</title><link rel="stylesheet" type="text/css" href="/css/style.css?v=0.0.0"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/normalize/8.0.0/normalize.min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/pure-min.css"><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/pure/1.0.0/grids-responsive-min.css"><link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css"><script type="text/javascript" src="//cdn.bootcss.com/jquery/3.3.1/jquery.min.js"></script><link rel="Shortcut Icon" type="image/x-icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="apple-touch-icon-precomposed" href="/apple-touch-icon.png"></head><body><div class="body_container"><div id="header"><div class="site-name"><h1 class="hidden">Redis主从复制</h1><a id="logo" href="/.">Darcy Blog</a><p class="description">The more I see of the world, the more I am dissatisfied with it</p></div><div id="nav-menu"><a class="current" href="/."><i class="fa fa-home"> 首页</i></a><a href="/archives/"><i class="fa fa-archive"> 归档</i></a><a href="/about/"><i class="fa fa-user"> 关于</i></a></div></div><div class="pure-g" id="layout"><div class="pure-u-1 pure-u-md-3-4"><div class="content_container"><div class="post"><h1 class="post-title">Redis主从复制</h1><div class="post-meta">Mar 11, 2017<span> | </span><span class="category"><a href="/categories/Redis/">Redis</a></span></div><div class="post-content"><h1 id="Redis主从复制"><a href="#Redis主从复制" class="headerlink" title="Redis主从复制"></a>Redis主从复制</h1><h2 id="关于复制"><a href="#关于复制" class="headerlink" title="关于复制"></a>关于复制</h2><p>复制技术在存储服务中是一项常用的技术，数据库复制指的是发⽣在不同数据库实例之间，单向的信息传播的⾏为；通常由被复制⽅和复制⽅组成，复制⽅和被复制⽅之间建⽴网络连接，复制⽅式通常为被复制⽅主动将数据发送到复制⽅，复制⽅接收到数据存储在当前实例例，最终⽬的是为了保证双⽅的数据一致、同步。</p>
+<p>关于Redis的复制，官网解释如下:<br>“At the base of Redis replication there is a very simple to use and configure master-slave replication that allows slave Redis servers to be exact copies of master servers”</p>
+<h2 id="复制流程"><a href="#复制流程" class="headerlink" title="复制流程"></a>复制流程</h2><p>关于Redis的复制流程主要分为初始化复制和增量复制两部分</p>
+<ul>
+<li><p>初始化复制的流程如下:</p>
+<blockquote>
+<ul>
+<li>SLAVE Redis节点启动</li>
+<li>SLAVE节点发送同步命令(SLAVEOF MASTER_IP MASTER_PORT)</li>
+<li>主节点接收同步请求，fork子进程生成RDB文件，缓存所有的写入命令到额外的buffer中(circular buffer)</li>
+<li>主节点完成持久化，发生持久化文件到从节点</li>
+<li>从节点加载RDB文件</li>
+<li>从节点请求加载主节点之前缓存在buffer中的增量数据</li>
+</ul>
+</blockquote>
+</li>
+<li><p>增量复制流程如下：</p>
+<blockquote>
+<ul>
+<li>主服务器写入命令记⼊额外的buffer，对写入的数据进行编号</li>
+<li>从节点发送目前同步到的点位，主节点发送增量数据</li>
+</ul>
+</blockquote>
+</li>
+</ul>
+<h3 id="有以下几点需要注意："><a href="#有以下几点需要注意：" class="headerlink" title="有以下几点需要注意："></a>有以下几点需要注意：</h3><ul>
+<li>如果集群开启cluster模式，那么不允许手动在从节点上执行slaveof命令同步数据</li>
+<li>如果要断开主从复制，需要在从节点上执行  <code>SLAVEOF NO ONE</code></li>
+<li>完成同步之前保证主从之间的socket链接不断开</li>
+<li>初始化复制过程中的buffer是每个slave独享的，复制结束后的增量复制是global buffer and global  offset(replication backlog)</li>
+<li>以下几种情况可能会出现超时<blockquote>
+<ul>
+<li>Non blocking connection timeout,从节点和主节点建立连接失败</li>
+<li>Bulk transfer I/O timeout，从节点接受直接读的增量数据超时</li>
+<li>Timed out master when we are an already connected slave，加载数据超时，和主节点的心跳丢失</li>
+</ul>
+</blockquote>
+</li>
+</ul>
+<h2 id="关于复制的参数"><a href="#关于复制的参数" class="headerlink" title="关于复制的参数"></a>关于复制的参数</h2><ul>
+<li>repl-backlog-ttl<blockquote>
+<ul>
+<li>说明：master没有slave一段时间会释放复制缓冲区的内存，repl-backlog-ttl用来设置该时间长度</li>
+<li>默认值:3600</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:大于0</li>
+</ul>
+</blockquote>
+</li>
+<li><p>repl-timeout</p>
+<blockquote>
+<ul>
+<li>说明：复制链接超时时间,master和slave都有超时时间的设置。master检测到slave上次发送发送replconf命令的时间超过repl-timeout，即认为slave离线，清除该slave信息。slave检测到上次和master交互的时间超过repl-timeout，则认为master离线。需要注意的是repl-timeout需要设置一个比repl-ping-slave-period更大的值，不然会经常检测到超时。</li>
+<li>默认值:60</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:大于0</li>
+</ul>
+</blockquote>
+</li>
+<li><p>client-output-buffer-limit</p>
+<blockquote>
+<ul>
+<li>说明：client output buffer限制，可以用来强制关闭传输缓慢的客户端。格式为client-output-buffer-limit,可以为normal、slave、pubsub。hard limit表示output buffer超过该值就直接关闭客户端。soft limit和soft seconds表示output buffer超过soft limit后只需soft seconds后关闭客户端连接</li>
+<li>默认值:<br>client-output-buffer-limit normal 0 0 0<br>client-output-buffer-limit slave 256mb 64mb 60<br>client-output-buffer-limit pubsub 32mb 8mb 60</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:[normal|slave|pubsub]</li>
+</ul>
+</blockquote>
+</li>
+<li><p>min-slaves-to-write <number of="" slaves=""></number></p>
+<blockquote>
+<ul>
+<li>说明：redis提供了可以让master停止写入的方式，如果配置了min-slaves-to-write，健康的slave的个数小于N，mater就禁止写入。master最少得有多少个good的slave存活才能执行写命令。这个配置虽然不能保证N个slave都一定能接收到master的写操作，但是能避免没有足够good slave的时候，master不能写入来避免数据丢失</li>
+<li>默认值:0</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:大于等于0</li>
+</ul>
+</blockquote>
+</li>
+<li><p>min-slaves-max-lag <number of="" seconds=""></number></p>
+<blockquote>
+<ul>
+<li>说明：延迟小于min-slaves-max-lag的slave才认为是good slave</li>
+<li>默认值:10</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:大于等于0</li>
+</ul>
+</blockquote>
+</li>
+<li><p>repl_backlog</p>
+<blockquote>
+<ul>
+<li>说明：复制缓冲区大小，这是一个环形复制缓冲区，用来保存最新复制的命令</li>
+<li>默认值:1mb</li>
+<li>是否可以动态修改:yes</li>
+<li>值的范围:内存单位</li>
+</ul>
+</blockquote>
+</li>
+</ul>
+<h2 id="expire-keys-如何同步"><a href="#expire-keys-如何同步" class="headerlink" title="expire keys 如何同步"></a>expire keys 如何同步</h2><ul>
+<li>Slaves don’t expire keys, instead they wait for masters to expire the keys</li>
+<li>However because of master-driven expire, sometimes slaves may still have in memory keys that are already logically expired</li>
+</ul>
+</div><div><ul class="post-copyright"><li class="post-copyright-author"><strong>本文作者：</strong>Darcy</li><li class="post-copyright-link"><strong>本文链接：</strong><a href="/2017/03/11/Redis-主从复制/">http://www.darcy.org.cn/2017/03/11/Redis-主从复制/</a></li><li class="post-copyright-license"><strong>版权声明：</strong>The author owns the copyright, please indicate the source reproduced</li></ul></div><br><div class="tags"><a href="/tags/经验/">经验</a><a href="/tags/Redis/">Redis</a></div><div class="post-nav"><a class="pre" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a><a class="next" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></div></div></div></div><div class="pure-u-1-4 hidden_mid_and_down"><div id="sidebar"><div class="widget"><form class="search-form" action="//www.google.com/search" method="get" accept-charset="utf-8" target="_blank"><input type="text" name="q" maxlength="20" placeholder="Search"/><input type="hidden" name="sitesearch" value="http://www.darcy.org.cn"/></form></div><div class="widget"><form class="search-form" action="//www.baidu.com/baidu" method="get" accept-charset="utf-8" target="_blank"><input type="search" name="word" maxlength="20" placeholder="Search"/><input type="hidden" name="si" value="http://www.darcy.org.cn"/><input name="tn" type="hidden" value="bds"/><input name="cl" type="hidden" value="3"/><input name="ct" type="hidden" value="2097152"/><input name="s" type="hidden" value="on"/></form></div><div class="widget"><div class="widget-title"><i class="fa fa-folder-o"> 分类</i></div><ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/Elasticsearch/">Elasticsearch</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Linux/">Linux</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/MySQL/">MySQL</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/Redis/">Redis</a></li><li class="category-list-item"><a class="category-list-link" href="/categories/工具/">工具</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-star-o"> 标签</i></div><div class="tagcloud"><a href="/tags/设计/" style="font-size: 15px;">设计</a> <a href="/tags/Linux/" style="font-size: 15px;">Linux</a> <a href="/tags/Thunderbird/" style="font-size: 15px;">Thunderbird</a> <a href="/tags/Shell/" style="font-size: 15px;">Shell</a> <a href="/tags/Tool/" style="font-size: 15px;">Tool</a> <a href="/tags/MySQL/" style="font-size: 15px;">MySQL</a> <a href="/tags/工具/" style="font-size: 15px;">工具</a> <a href="/tags/经验/" style="font-size: 15px;">经验</a> <a href="/tags/优化/" style="font-size: 15px;">优化</a> <a href="/tags/Redis/" style="font-size: 15px;">Redis</a> <a href="/tags/Elasticsearch/" style="font-size: 15px;">Elasticsearch</a> <a href="/tags/监控/" style="font-size: 15px;">监控</a></div></div><div class="widget"><div class="widget-title"><i class="fa fa-file-o"> 最近文章</i></div><ul class="post-list"><li class="post-list-item"><a class="post-list-link" href="/2017/05/11/Elasticsearch监控/">Elasticsearch监控</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/04/06/Elasticsearch部署优化/">Elasticsearch部署优化</a></li><li class="post-list-item"><a class="post-list-link" href="/2017/03/11/Redis-主从复制/">Redis主从复制</a></li><li class="post-list-item"><a class="post-list-link" href="/2016/08/14/Redis中的used-memory与maxmemory解惑/">Redis中的used_memory与maxmemory解惑</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/07/20/thunderbird-jin-jie/">Thunderbird 进阶</a></li><li class="post-list-item"><a class="post-list-link" href="/2015/06/19/linuxxia-ru-he-an-quan-shan-chu-wen-jian/">Linux下如何安全删除文件</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/23/mysqltong-ji-xin-xi/">MySQL统计信息</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/12/MySQL-explain/">MySQL 执行计划详解</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/10/mysql-shardingzai-gao-bing-fa-xia-de-quan-ju-idsheng-cheng/">MySQL sharding在高并发下的全局ID生成</a></li><li class="post-list-item"><a class="post-list-link" href="/2014/06/06/shell-config-parser/">shell 解析配置文件</a></li></ul></div><div class="widget"><div class="widget-title"><i class="fa fa-external-link"> 友情链接</i></div><ul></ul><a href="http://chaubeau.lofter.com" title="chaubeau" target="_blank">chaubeau</a></div></div></div><div class="pure-u-1 pure-u-md-3-4"><div id="footer">Copyright © 2018 <a href="/." rel="nofollow">Darcy Blog</a></div></div></div><a class="show" id="rocket" href="#top"></a><script type="text/javascript" src="/js/totop.js?v=0.0.0" async></script><script type="text/javascript" src="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.js" async></script><script type="text/javascript" src="/js/fancybox.js?v=0.0.0" async></script><link rel="stylesheet" type="text/css" href="//cdn.bootcss.com/fancybox/3.3.5/jquery.fancybox.min.css"><script type="text/javascript" src="/js/codeblock-resizer.js?v=0.0.0"></script><script type="text/javascript" src="/js/smartresize.js?v=0.0.0"></script></div></body></html>
